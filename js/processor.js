@@ -284,9 +284,13 @@
   }
 
   function groupRows(data, headers, itemCol, isTotal, note) {
-    var qtnCol = findCol(headers, CONFIG.qtn);
+    // Every quantity column (QTN, Qty, Quantity...) is totalled on grouped rows.
+    var qtyAliases = CONFIG.qtn.concat(CONFIG.qtyKg);
+    var sumCols = [];
+    headers.forEach(function (h, ci) { if (qtyAliases.indexOf(norm(h)) !== -1) sumCols.push(ci); });
+    var qtnCol = sumCols.length ? sumCols[0] : -1;
     var hdCol = findCol(headers, CONFIG.holdingDays);
-    if (qtnCol === -1) note('No "QTN" column found for subtotals.', 'warn');
+    if (qtnCol === -1) note('No QTN / Qty column found for subtotals.', 'warn');
     if (hdCol === -1) note('No "Holding Days" column found for averages.', 'warn');
 
     var order = [], groups = {}, totals = [];
@@ -311,7 +315,7 @@
       multi++; groupId++;
       var summary = headers.map(function (_, ci) {
         if (ci === itemCol) return recs[0][itemCol];
-        if (ci === qtnCol) {
+        if (sumCols.indexOf(ci) !== -1) {
           var nums = recs.map(function (r) { return r[ci]; }).filter(function (v) { return typeof v === 'number'; });
           return nums.length ? nums.reduce(function (a, b) { return a + b; }, 0) : null;
         }
@@ -332,7 +336,7 @@
     var out = [];
     blocks.forEach(function (b) { out.push.apply(out, b); });
     totals.forEach(function (r) { out.push({ type: 'total', cells: r }); });
-    note('Grouped ' + multi + ' repeated item name(s): QTN totalled, Holding Days averaged. ' +
+    note('Grouped ' + multi + ' repeated item name(s): quantity totalled, Holding Days averaged. ' +
       order.length + ' unique items shown' + (hdCol !== -1 ? ', sorted by Holding Days (highest first).' : '.'));
     return out;
   }

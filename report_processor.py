@@ -303,10 +303,13 @@ def process_sheet(name: str, raw_rows: list[list], log: list[dict]) -> Sheet:
 
 
 def group_rows(data, headers, item_col, is_total, note) -> list[Row]:
-    qtn_col = find_col(headers, CONFIG["qtn"])
+    # Every quantity column (QTN, Qty, Quantity...) is totalled on grouped rows.
+    qty_aliases = set(CONFIG["qtn"]) | set(CONFIG["qty_kg"])
+    sum_cols = {ci for ci, h in enumerate(headers) if norm(h) in qty_aliases}
+    qtn_col = min(sum_cols) if sum_cols else -1
     hd_col = find_col(headers, CONFIG["holding_days"])
     if qtn_col == -1:
-        note('No "QTN" column found for subtotals.', "warn")
+        note('No QTN / Qty column found for subtotals.', "warn")
     if hd_col == -1:
         note('No "Holding Days" column found for averages.', "warn")
 
@@ -337,7 +340,7 @@ def group_rows(data, headers, item_col, is_total, note) -> list[Row]:
             vals = [r[ci] for r in recs]
             if ci == item_col:
                 summary.append(recs[0][item_col])
-            elif ci == qtn_col:
+            elif ci in sum_cols:
                 nums = [v for v in vals if is_num(v)]
                 summary.append(float(sum(nums)) if nums else None)
             elif ci == hd_col:
@@ -355,7 +358,7 @@ def group_rows(data, headers, item_col, is_total, note) -> list[Row]:
         blocks.sort(key=lambda b: hd_key(b[0].cells))  # stable: ties keep original order
     out = [row for b in blocks for row in b]
     out.extend(Row("total", r) for r in totals)
-    note(f"Grouped {multi} repeated item name(s): QTN totalled, Holding Days averaged. "
+    note(f"Grouped {multi} repeated item name(s): quantity totalled, Holding Days averaged. "
          f"{len(groups)} unique items shown"
          + (", sorted by Holding Days (highest first)." if hd_col != -1 else "."))
     return out
