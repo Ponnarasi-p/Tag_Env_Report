@@ -3,12 +3,32 @@
 A small website that takes the aging-stock Excel report downloaded from the existing system,
 fixes its data and formatting, and gives back a corrected `.xlsx`.
 
-Everything runs in the browser, so files are never uploaded to a server. There is no backend to run.
+There are two versions of the same tool in this repo:
+
+* **Streamlit app** (`app.py`), the main one to deploy. See *Deploying on Streamlit* below.
+* **Static web page** (`index.html`) runs entirely in the browser, for hosts like GitHub Pages.
+
+Both apply exactly the same rules.
+
+## Deploying on Streamlit
+
+1. Go to https://share.streamlit.io and sign in with GitHub.
+2. Click **Create app → Deploy a public app from GitHub**.
+3. Pick this repository, branch `main`, main file `app.py`, then click **Deploy**.
+
+Streamlit installs everything listed in `requirements.txt` automatically.
+
+To run it on your own PC:
+
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
 
 ## Using it
 
-1. Open the site (see *Hosting* below).
-2. Drop the downloaded report (`.xlsx` or `.xls`) onto the page.
+1. Open the deployed Streamlit app (or the static page).
+2. Upload the downloaded report (`.xlsx` or `.xls`).
 3. Look over the list of changes and the preview, then click **Download corrected Excel**.
 
 ## What it corrects
@@ -33,11 +53,11 @@ Names are matched loosely: case, spaces, punctuation and anything in brackets ar
 * *All TagEnv Aging Stock* = a name containing "tagenv"
 
 If the source system uses a different header name, add it to the matching list in `CONFIG` at the top of
-[`js/processor.js`](js/processor.js).
+[`report_processor.py`](report_processor.py) (Streamlit) and [`js/processor.js`](js/processor.js) (static page).
 
-## Hosting
+## Hosting the static page
 
-It is a static site, so any static host works. With **GitHub Pages**: repo **Settings → Pages →
+The static page needs no server, so any static host works. With **GitHub Pages**: repo **Settings → Pages →
 Deploy from branch → `main` / root**. The site will then be at
 `https://<user>.github.io/printing_daily_reports/`.
 
@@ -50,6 +70,14 @@ python -m http.server 8000
 then open http://localhost:8000.
 
 ## Files
+
+Streamlit app:
+* `app.py`: upload, preview (click a grouped item to see its records) and download
+* `report_processor.py`: all correction rules (edit `CONFIG` at the top to add header names)
+* `excel_reader.py` / `excel_writer.py`: read the upload, write the formatted workbook (openpyxl)
+* `requirements.txt`
+
+Static page:
 
 * `index.html`, `css/style.css`: the page
 * `js/processor.js`: all correction rules (pure functions, can also run in Node)
