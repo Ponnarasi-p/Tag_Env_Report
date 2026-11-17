@@ -21,8 +21,8 @@
     rawAgingRemove: ['lotcode', 'lotno', 'lotnumber', 'supplierlotno', 'supplierlotnumber', 'category', 'gsm', 'qty', 'quantity', 'machineline'],
     tagEnvRemove: ['lotcode', 'lotno', 'lotnumber', 'supplierlotno', 'supplierlotnumber', 'width', 'gsm', 'sourcetype'],
     qtn: ['qtn', 'qtnkg', 'qtnmt', 'qtnton', 'qtntons'],
-    // Quantity headings on the Raw Aging / TagEnv sheets that get "(kg)" added.
-    qtyKg: ['qty', 'qtn', 'quantity'],
+    // Quantity column renamed to "QTY (kg)" on the Raw Aging / TagEnv sheets, in this order of preference.
+    qtyKg: ['qtn', 'qty', 'quantity'],
     holdingDays: ['holdingdays', 'holdingday', 'holddays', 'holdingdaysdays'],
     stock: ['stock', 'stockkg', 'closingstock', 'currentstock', 'stockqty', 'balancestock', 'availablestock', 'stockinhand', 'totalstock', 'stockinkg'],
     nullTokens: ['', 'null', 'nil', 'n/a', 'na', '#n/a', 'none', 'undefined', 'nan'],
@@ -267,14 +267,17 @@
     });
     if (zeros) note('Replaced ' + zeros + ' zero value(s) with "-".');
 
-    // ---- Quantity heading shows its unit, e.g. "QTY" -> "QTY (kg)"
+    // ---- Quantity heading becomes "QTY (kg)" (QTN preferred, then Qty, then Quantity)
     if (kind === 'raw' || kind === 'tagenv') {
-      headers = headers.map(function (hd) {
-        if (CONFIG.qtyKg.indexOf(norm(hd)) === -1 || /kg/i.test(hd)) return hd;
-        var renamed = hd.replace(/\s*\([^)]*\)\s*$/, '') + ' (kg)';
-        note('Renamed heading "' + hd + '" to "' + renamed + '".');
-        return renamed;
-      });
+      for (var qa = 0; qa < CONFIG.qtyKg.length; qa++) {
+        var qc = findCol(headers, [CONFIG.qtyKg[qa]]);
+        if (qc === -1) continue;
+        if (headers[qc] !== 'QTY (kg)') {
+          note('Renamed heading "' + headers[qc] + '" to "QTY (kg)".');
+          headers[qc] = 'QTY (kg)';
+        }
+        break;
+      }
     }
 
     return { name: name, kind: kind, index: index, titleRows: titleRows, headers: headers, rows: outRows, numericCols: numericCols, itemCol: itemCol };

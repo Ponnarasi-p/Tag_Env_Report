@@ -23,8 +23,8 @@ CONFIG = {
     "tagenv_remove": ["lotcode", "lotno", "lotnumber", "supplierlotno", "supplierlotnumber",
                       "width", "gsm", "sourcetype"],
     "qtn": ["qtn", "qtnkg", "qtnmt", "qtnton", "qtntons"],
-    # Quantity headings on the Raw Aging / TagEnv sheets that get "(kg)" added.
-    "qty_kg": ["qty", "qtn", "quantity"],
+    # Quantity column renamed to "QTY (kg)" on the Raw Aging / TagEnv sheets, in this order of preference.
+    "qty_kg": ["qtn", "qty", "quantity"],
     "holding_days": ["holdingdays", "holdingday", "holddays"],
     "stock": ["stock", "stockkg", "closingstock", "currentstock", "stockqty", "balancestock",
               "availablestock", "stockinhand", "totalstock", "stockinkg"],
@@ -288,12 +288,15 @@ def process_sheet(name: str, raw_rows: list[list], log: list[dict]) -> Sheet:
     if zeros:
         note(f'Replaced {zeros} zero value(s) with "-".')
 
-    # ---- Quantity heading shows its unit, e.g. "QTY" -> "QTY (kg)"
+    # ---- Quantity heading becomes "QTY (kg)" (QTN preferred, then Qty, then Quantity)
     if kind in ("raw", "tagenv"):
-        for ci, hd in enumerate(headers):
-            if norm(hd) in CONFIG["qty_kg"] and "kg" not in hd.lower():
-                headers[ci] = re.sub(r"\s*\([^)]*\)\s*$", "", hd) + " (kg)"
-                note(f'Renamed heading "{hd}" to "{headers[ci]}".')
+        for alias in CONFIG["qty_kg"]:
+            ci = next((i for i, hd in enumerate(headers) if norm(hd) == alias), -1)
+            if ci != -1:
+                if headers[ci] != "QTY (kg)":
+                    note(f'Renamed heading "{headers[ci]}" to "QTY (kg)".')
+                    headers[ci] = "QTY (kg)"
+                break
 
     return Sheet(name=name, kind=kind, title_rows=title_rows, headers=headers, rows=out_rows,
                  numeric_cols=numeric_cols, item_col=item_col)
