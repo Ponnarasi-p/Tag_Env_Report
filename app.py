@@ -18,7 +18,7 @@ RULES = """
 2. **Day Consumption** is converted from tons to kg, and **No. of Days Consumption** is recalculated using kg.
 3. **Raw Aging Stock**: Lot Code, Lot No, Supplier Lot No, Category, GSM, Qty and Machine Line are removed.
 4. **All TagEnv Aging Stock**: Lot Code, Lot No, Supplier Lot No, Width, GSM and Source Type are removed.
-   Repeated items are grouped with total QTN and average Holding Days. Click a grouped item in the
+   Repeated items are grouped with total QTN and average Holding Days, and the sheet is sorted by Holding Days (highest first). Click a grouped item in the
    preview (or the **[+]** in Excel's left margin) to see each record.
 5. Decimal numbers are rounded to whole numbers.
 6. Zero values are shown as "-" on every sheet.

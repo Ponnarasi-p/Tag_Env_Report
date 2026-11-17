@@ -294,11 +294,16 @@ def group_rows(data, headers, item_col, is_total, note) -> list[Row]:
         key = "\0blank" if is_empty(r[item_col]) else str(r[item_col]).strip().lower()
         groups.setdefault(key, []).append(r)
 
-    out: list[Row] = []
+    def hd_key(cells):
+        # Descending by Holding Days; rows without a value go last.
+        v = cells[hd_col] if hd_col != -1 else None
+        return (0, -v) if is_num(v) else (1, 0)
+
+    blocks: list[list[Row]] = []
     gid = multi = 0
     for recs in groups.values():
         if len(recs) == 1:
-            out.append(Row("data", recs[0]))
+            blocks.append([Row("data", recs[0])])
             continue
         multi += 1
         gid += 1
@@ -318,9 +323,14 @@ def group_rows(data, headers, item_col, is_total, note) -> list[Row]:
                 first = vals[0]
                 same = all(str(v) == str(first) for v in vals)
                 summary.append(first if same and not isinstance(first, (datetime, date)) else None)
-        out.append(Row("summary", summary, gid, len(recs)))
-        out.extend(Row("detail", r, gid) for r in recs)
+        details = sorted(recs, key=hd_key)
+        blocks.append([Row("summary", summary, gid, len(recs))] + [Row("detail", r, gid) for r in details])
+
+    if hd_col != -1:
+        blocks.sort(key=lambda b: hd_key(b[0].cells))  # stable: ties keep original order
+    out = [row for b in blocks for row in b]
     out.extend(Row("total", r) for r in totals)
     note(f"Grouped {multi} repeated item name(s): QTN totalled, Holding Days averaged. "
-         f"{len(groups)} unique items shown.")
+         f"{len(groups)} unique items shown"
+         + (", sorted by Holding Days (highest first)." if hd_col != -1 else "."))
     return out

@@ -262,10 +262,17 @@
       groups[key].push(r);
     });
 
-    var out = [], groupId = 0, multi = 0;
+    // Descending by Holding Days; rows without a value go last. Stable for ties.
+    var hdCmp = function (a, b) {
+      var x = hdCol === -1 ? null : a[hdCol], y = hdCol === -1 ? null : b[hdCol];
+      var xn = typeof x === 'number', yn = typeof y === 'number';
+      if (xn && yn) return y - x;
+      return xn ? -1 : yn ? 1 : 0;
+    };
+    var blocks = [], groupId = 0, multi = 0;
     order.forEach(function (key) {
       var recs = groups[key];
-      if (recs.length === 1) { out.push({ type: 'data', cells: recs[0] }); return; }
+      if (recs.length === 1) { blocks.push([{ type: 'data', cells: recs[0] }]); return; }
       multi++; groupId++;
       var summary = headers.map(function (_, ci) {
         if (ci === itemCol) return recs[0][itemCol];
@@ -282,12 +289,16 @@
         var same = recs.every(function (r) { return String(r[ci]) === String(first); });
         return same && !(first instanceof Date) ? first : null;
       });
-      out.push({ type: 'summary', cells: summary, groupId: groupId, count: recs.length });
-      recs.forEach(function (r) { out.push({ type: 'detail', cells: r, groupId: groupId }); });
+      var block = [{ type: 'summary', cells: summary, groupId: groupId, count: recs.length }];
+      recs.slice().sort(hdCmp).forEach(function (r) { block.push({ type: 'detail', cells: r, groupId: groupId }); });
+      blocks.push(block);
     });
+    if (hdCol !== -1) blocks.sort(function (a, b) { return hdCmp(a[0].cells, b[0].cells); });
+    var out = [];
+    blocks.forEach(function (b) { out.push.apply(out, b); });
     totals.forEach(function (r) { out.push({ type: 'total', cells: r }); });
     note('Grouped ' + multi + ' repeated item name(s): QTN totalled, Holding Days averaged. ' +
-      (order.length) + ' unique items shown.');
+      order.length + ' unique items shown' + (hdCol !== -1 ? ', sorted by Holding Days (highest first).' : '.'));
     return out;
   }
 

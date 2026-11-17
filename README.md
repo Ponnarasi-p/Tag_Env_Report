@@ -38,7 +38,7 @@ streamlit run app.py
 | 1 | Removes rows that have an item name but no other values (empty or `NULL`). Rows with at least one value are kept. S.No is renumbered. | All sheets |
 | 2 | Converts **Day Consumption** from tons to kg (×1000) and recalculates **No. of Days Consumption** as `Stock ÷ Day Consumption (Kg)`. With no Stock column, the old value is divided by 1000, which gives the same result. | Any sheet with these columns |
 | 3 | Removes Lot Code, Lot No, Supplier Lot No, Category, GSM, Qty and Machine Line. | Raw Aging Stock |
-| 4 | Removes Lot Code, Lot No, Supplier Lot No, Width, GSM and Source Type. Groups repeated item names into one summary row with total QTN and average Holding Days. The individual records sit underneath: click the item in the web preview, or the **[+]** in Excel's left margin, to expand. | All TagEnv Aging Stock |
+| 4 | Removes Lot Code, Lot No, Supplier Lot No, Width, GSM and Source Type. Groups repeated item names into one summary row with total QTN and average Holding Days. Rows are sorted by Holding Days, highest first (a grouped item uses its average; its records are sorted too). The individual records sit underneath: click the item in the web preview, or the **[+]** in Excel's left margin, to expand. | All TagEnv Aging Stock |
 | 5–7 | Zero values become `-` | All sheets, including the 4th |
 | 6 | Decimals are rounded to the nearest whole number. | All sheets |
 | 8 | Styled header row, borders, banded rows, alignment (numbers right, text left), auto column widths, frozen header, filters, landscape print setup. | All sheets |
