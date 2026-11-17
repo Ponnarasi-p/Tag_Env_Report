@@ -47,16 +47,18 @@ Make Cases = (Available Kg × Conversion factor) / Pcs per CFC
   240, which is what the manual report uses.
 - When an item is in several finished goods:
   1. a finished good with a **pending order** wins (largest pending quantity);
-  2. else the value used in the template report, if the BOM still has it;
-  3. else the most common pack size in the BOM.
-- Item not in the BOM: the template report's value is carried over and listed as a warning.
-  Nothing at all: Make Cases is left empty and listed as a warning.
-- BOM lines under 1 piece per CFC (data errors, e.g. `0.0072`) are ignored and reported.
+  2. else the most common pack size in the BOM (on a tie, the smaller pack).
+- **Item not in the uploaded BOM: Make Cases shows `N/A`.** The app lists these items and asks
+  for a new Exploded BOM. No value is taken from an older report.
+- BOM lines under 1 piece per CFC (data errors, e.g. `0.0072`) are ignored; the item shows `N/A`.
+
+Every number comes from the three uploaded files. The template supplies only the layout
+(sheets, headers, formatting, row order, shared-tag blocks).
 
 **Shared tags** (e.g. one GV FLAVOUR tag for all GV envelopes) are written once and merged
 down over the rows that share them, using the template's merged blocks.
 
-**Remarks** are manual notes and are carried over from the template by row.
+**Remarks** are left blank for the user to fill in.
 
 ## Validation done
 
@@ -68,13 +70,16 @@ generated report was compared with the manually prepared *Tag_Env_Stock_as_on_06
 | Rows and row order (207 rows) | identical |
 | Merged cells | identical |
 | Stock Kg per row/column (270 cells) | 270 / 270 match |
-| Pcs per CFC denominators (270 cells) | 264 / 270 match |
-| Excel recalculation (3,613 formulas) | 0 errors |
+| Pcs per CFC denominators (270 cells) | 237 same, 30 `N/A` (not in BOM), 3 different |
+| Excel recalculation | 0 errors |
 | Structure/format checks vs template | 25 / 25 pass |
 
-The 6 denominator differences are items with no pending order where the manual report's
-choice changed between reports (e.g. KHAIMA CINNAMON 1125 → 600), or where a pending order
-exists but the manual report used another pack size.
+The 30 `N/A` cells are items missing from the 20-08 BOM (the manual report typed a value).
+The 3 different are items with no pending order where the BOM has several pack sizes and the
+manual report picked another one (AL FINA GREEN TEA LEMON, CHAYA PINEAPPLE, VICTORIA).
+
+`tests/test_unseen_inputs.py` runs the generator on inputs it has never seen (new brand,
+moved header, no orders, removed items, duplicates, wrong files).
 
 Compare any generated report with a manual one:
 

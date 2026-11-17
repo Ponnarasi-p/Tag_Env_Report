@@ -46,7 +46,9 @@
       "AF": ["AC", "AE"],
       "AJ": ["AI"]
     },
-    "total_can_make": {"col": "AL", "sum_of": ["F", "L", "P", "T"]}
+    "total_can_make": {"col": "AL", "sum_of": ["F", "L", "P", "T"]},
+    "_uniform_comment": "These columns get the first data row's formatting (borders, number format) on every row; the template only formatted the first few rows.",
+    "uniform_style_columns": ["AL", "AM"]
   },
 
   "_machine_line_comment": "Stock Summary 'Machine Line Name' -> stock column on the main sheet. Lines not listed (paper, ink, divider...) are ignored.",

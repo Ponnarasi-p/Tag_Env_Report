@@ -14,7 +14,7 @@ if cache.exists():
 rep = pipeline.generate(stock, orders, bom, tmpl, bom_df=bom_df)
 Path(out).write_bytes(rep.xlsx)
 print(f"done in {time.time()-t:.1f}s -> {out}")
-print("SUMMARY", rep.summary)
+print("SUMMARY", {k: v for k, v in rep.summary.items() if k != "missing_bom_items"})
 for w in rep.input_warnings + rep.warnings: print("WARN:", w)
 print(rep.checks.to_string())
 rep.audit.to_csv(out.replace(".xlsx", "_audit.csv"), index=False)

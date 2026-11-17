@@ -146,6 +146,14 @@ if rep is not None:
     else:
         st.error(f"Format check: {len(fails)} of {len(rep.checks)} checks differ from the template.")
 
+    missing = s.get("missing_bom_items")
+    if missing is not None and len(missing):
+        st.error(f"**{len(missing)} item(s) are not available in the Exploded BOM.** Their Make Cases "
+                 "shows **N/A** in the report. Please submit a new Exploded BOM that includes these "
+                 "items and generate the report again.")
+        st.dataframe(missing, width="stretch", hide_index=True,
+                     height=min(400, 38 + 35 * len(missing)))
+
     all_w = rep.input_warnings + rep.warnings
     if all_w:
         with st.expander(f"Warnings and processing notes ({len(all_w)})", expanded=True):

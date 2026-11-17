@@ -30,23 +30,26 @@ def preview_frame(res: engine.Result, cfg: dict) -> pd.DataFrame:
     for r in res.rows:
         rec = {"Brand": r.label.strip()}
         cases = {}
+        not_in_bom = []
         for col, spec in main["stock_columns"].items():
             q = r.qty.get(col, 0.0)
             d = r.denom.get(col)
             f = res.conversion.get(spec["cases_col"])
-            cases[spec["cases_col"]] = (q * f / d) if (d and f) else 0.0
+            cases[spec["cases_col"]] = (q * f / d) if (q and d and f) else 0.0
             name = f"{spec['group']} {'Tag' if spec['kind'] == 'TAG' else 'Env'}"
+            if q and not d:
+                not_in_bom.append(name)
             rec[f"{name} Kg"] = round(q, 2)
             rec[f"{name} Pcs/CFC"] = d if q else None
-            rec[f"{name} Cases"] = round(cases[spec["cases_col"]], 1) if q else None
+            rec[f"{name} Cases"] = round(cases[spec["cases_col"]], 1) if (q and d) else None
         mx = {m: max(cases.get(c, 0.0) for c in src) for m, src in main["max_columns"].items()}
         rec["Total Can Make"] = round(sum(mx[c] for c in main["total_can_make"]["sum_of"]), 1)
-        rec["Remarks"] = r.remark
+        rec["N/A (not in BOM)"] = ", ".join(not_in_bom)
         rec["New Row"] = "Yes" if r.is_new else ""
         recs.append(rec)
     df = pd.DataFrame(recs)
     # drop columns that are empty for every row so the preview stays readable
-    keep = [c for c in df.columns if c in ("Brand", "Total Can Make", "Remarks", "New Row")
+    keep = [c for c in df.columns if c in ("Brand", "Total Can Make", "N/A (not in BOM)", "New Row")
             or df[c].fillna(0).astype(float).abs().sum() > 0]
     return df[keep]
 

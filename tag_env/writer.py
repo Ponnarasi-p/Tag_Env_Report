@@ -170,12 +170,18 @@ def write_report(res: Result, cfg: dict, report_date: datetime | None, template_
     t_first = t_rows[0] if t_rows else first
     formula_cols = list(main["max_columns"]) + [main["total_can_make"]["col"]]
     formula_tpl = {c: ws[f"{c}{t_first}"].value for c in formula_cols}
+    # "=S5" passes an "N/A" text on and breaks the total; "=MAX(S5)" (as the template
+    # already uses for Constanta) gives the same number and ignores text.
+    for c, f in formula_tpl.items():
+        if isinstance(f, str) and re.fullmatch(r"=\$?[A-Z]{1,3}\$?\d+", f):
+            formula_tpl[c] = f"=MAX({f[1:]})"
     total_r = (t_rows[-1] + 1) if t_rows else first
     total_vals = [ws.cell(total_r, c).value for c in range(1, ncols + 1)]
     total_style = _row_styles(ws, total_r, ncols)
     blank_style = _row_styles(ws, ws.max_row + 1, ncols)
     height = ws.row_dimensions[t_first].height
     old_last = ws.max_row
+    uniform = {c: copy.copy(ws[f"{c}{t_first}"]._style) for c in main.get("uniform_style_columns", [])}
 
     # conversion factors in row 4
     for cc, f in res.conversion.items():
@@ -221,13 +227,18 @@ def write_report(res: Result, cfg: dict, report_date: datetime | None, template_
             ws[f"{col}{cur}"].value = q
             cc = spec["cases_col"]
             d = row.denom.get(col)
-            if d and res.conversion.get(cc):
-                ws[f"{cc}{cur}"].value = f"=({col}{cur}*${cc}${main['conversion_row']})/{_fmt_den(d)}"
+            cell = ws[f"{cc}{cur}"]
+            if q and d and res.conversion.get(cc):
+                cell.value = f"=({col}{cur}*${cc}${main['conversion_row']})/{_fmt_den(d)}"
+            elif q:
+                cell.value = "N/A"          # not available in the uploaded BOM
             else:
-                ws[f"{cc}{cur}"].value = None
+                cell.value = 0              # no stock -> no cases (shown as "-")
         for c, f in formula_tpl.items():
             ws[f"{c}{cur}"].value = _shift_formula(f, t_first, cur) if f else None
         ws[f"{main['remarks_col']}{cur}"].value = row.remark
+        for c, st in uniform.items():
+            ws[f"{c}{cur}"]._style = copy.copy(st)
         row_of[row.key] = cur
         cur += 1
     last = cur - 1

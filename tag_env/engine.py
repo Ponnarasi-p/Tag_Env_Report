@@ -10,10 +10,10 @@ three flavours of 80 envelopes therefore gives 240, matching the manual report.
 
 Which FG is used when an item is in several:
   1. an FG with a pending order (largest pending quantity wins);
-  2. otherwise the FG whose Pcs per CFC equals the previous report's value;
-  3. otherwise the most common Pcs per CFC across the item's FGs (ties: larger).
-If the item is not in the BOM at all, the previous report's value is carried
-over and flagged; if there is none, Make Cases is left empty and flagged.
+  2. otherwise the most common Pcs per CFC across the item's FGs (ties: smaller).
+Everything comes from the uploaded files. If an item is not in the uploaded
+BOM, Make Cases shows N/A and the user is asked to submit a new BOM; no value
+is taken from an older report.
 """
 from __future__ import annotations
 
@@ -98,7 +98,6 @@ class Row:
     qty: dict[str, float] = field(default_factory=lambda: defaultdict(float))        # col -> kg
     denom: dict[str, float | None] = field(default_factory=dict)                     # col -> pcs/CFC
     denom_source: dict[str, str] = field(default_factory=dict)
-    prev_denom: dict[str, float] = field(default_factory=dict)                       # from template
 
     @property
     def key(self) -> str:
@@ -197,9 +196,8 @@ def build(stock: pd.DataFrame, orders: pd.DataFrame, bom: pd.DataFrame, template
     by_key: dict[str, Row] = {}
     by_rowkey: dict[str, Row] = {}
     for i, t in enumerate(template_info["rows"]):
-        r = Row(label=t["label"], full_label=t.get("full_label") or t["label"], template_index=i,
-                remark=t.get("remark"), stock_remark=t.get("stock_remark"),
-                prev_denom=dict(t.get("denoms", {})))
+        # Remarks are left blank: they are manual notes about a past date, not data from the inputs.
+        r = Row(label=t["label"], full_label=t.get("full_label") or t["label"], template_index=i)
         rows.append(r)
         by_key.setdefault(r.key, r)
         by_rowkey.setdefault(row_key(r.label), r)
@@ -280,23 +278,17 @@ def build(stock: pd.DataFrame, orders: pd.DataFrame, bom: pd.DataFrame, template
         for col, items in row.items.items():
             if not row.qty.get(col):
                 continue
-            prev = row.prev_denom.get(stock_cols[col]["cases_col"])
             # use the item with the most stock in the cell
             items_sorted = sorted(items, key=lambda it: -float(stock.loc[stock["item"] == it, "qty"].sum()))
             chosen = None
             for it in items_sorted:
-                d, src, fg = _denominator(it, prev, bidx, mjp_m4, pending, pending_products)
+                d, src, fg = _denominator(it, bidx, mjp_m4, pending, pending_products)
                 item_denoms[it] = (d, src, fg)
                 if chosen is None or (chosen[0] is None and d is not None):
                     chosen = (d, src, fg)
             row.denom[col] = chosen[0]
             row.denom_source[col] = chosen[1] + (f" [{chosen[2]}]" if chosen[2] else "")
-
-    # zero-stock cells keep the template's denominator so formulas look the same
-    for row in rows:
-        for col, spec in stock_cols.items():
-            if col not in row.denom:
-                row.denom[col] = row.prev_denom.get(spec["cases_col"])
+    # cells without stock have no item, so no Pcs per CFC (Make Cases is 0)
 
     # ---- audit enrichment ---------------------------------------------------
     for a in audit:
@@ -319,17 +311,15 @@ def build(stock: pd.DataFrame, orders: pd.DataFrame, bom: pd.DataFrame, template
     merges = _plan_merges(rows, template_info.get("merges", {}), stock_cols)
 
     # ---- warnings -----------------------------------------------------------
-    no_den = audit_df[(audit_df.get("Sheet") == main["name"]) & audit_df["Pcs per CFC (BOM)"].isna()
-                      & (audit_df["Stock Kg"] != 0)] if len(audit_df) else audit_df
-    if len(no_den):
-        warnings.append(f"{len(no_den)} item(s) have no Pcs per CFC (not in BOM and no previous value); "
-                        "Make Cases left empty: " + ", ".join(no_den["Item"].head(8))
-                        + ("..." if len(no_den) > 8 else ""))
-    carried = audit_df[audit_df["Pcs/CFC Source"].astype(str).str.startswith("Previous report")] if len(audit_df) else audit_df
-    if len(carried):
-        warnings.append(f"{len(carried)} item(s) are not in the Exploded BOM; the previous report's "
-                        "Pcs per CFC was carried over: " + ", ".join(carried["Item"].head(8))
-                        + ("..." if len(carried) > 8 else ""))
+    if len(audit_df):
+        miss = audit_df[(audit_df["Sheet"] == main["name"]) & audit_df["Pcs per CFC (BOM)"].isna()
+                        & (audit_df["Stock Kg"] != 0)]
+        missing_bom_items = miss[["Item", "Machine Line", "Stock Kg", "Row", "Pcs/CFC Source"]].reset_index(drop=True)
+    else:
+        missing_bom_items = pd.DataFrame(columns=["Item", "Machine Line", "Stock Kg", "Row", "Pcs/CFC Source"])
+    if len(missing_bom_items):
+        warnings.append(f"{len(missing_bom_items)} item(s) are not available in the Exploded BOM, so their "
+                        "Make Cases shows N/A. Please submit a new Exploded BOM that includes them.")
     if new_rows:
         warnings.append(f"{len(new_rows)} new row(s) added for items not in the template: "
                         + ", ".join(new_rows[:10]) + ("..." if len(new_rows) > 10 else ""))
@@ -357,30 +347,28 @@ def build(stock: pd.DataFrame, orders: pd.DataFrame, bom: pd.DataFrame, template
         "bom_fgs": len(bidx.by_fg),
         "cells_from_orders": int(audit_df["Pcs/CFC Source"].astype(str).str.startswith("Pending").sum()) if len(audit_df) else 0,
         "export_rows_without_stock": unused_export,
+        "missing_bom_items": missing_bom_items,
     }
     return Result(rows, export_rows, audit_df, warnings, summary, merges, conversion)
 
 
-def _denominator(item, prev, bidx: BomIndex, mjp_m4, pending, pending_products):
+NOT_IN_BOM = "Not available in BOM"
+
+
+def _denominator(item, bidx: BomIndex, mjp_m4, pending, pending_products):
+    """Pcs per CFC from the uploaded BOM only. Nothing is taken from older reports."""
     bom_item = bidx.resolve(item, mjp_m4)
     if bom_item is None:
-        if prev:
-            return float(prev), "Previous report (item not in BOM)", ""
-        return None, "Missing (item not in BOM)", ""
+        return None, NOT_IN_BOM, ""
     cands = bidx.candidates(bom_item)
     if not cands:
-        if prev:
-            return float(prev), "Previous report (BOM quantity invalid)", ""
-        return None, "Missing (BOM quantity invalid)", ""
+        return None, NOT_IN_BOM + " (invalid quantity)", ""
     pend = {fg: d for fg, d in cands.items() if fg in pending_products}
     if pend:
         fg = max(pend, key=lambda f: (pending[f], pend[f]))
         return pend[fg], "Pending order", fg
-    if prev and float(prev) in cands.values():
-        fg = next(f for f, d in cands.items() if d == float(prev))
-        return float(prev), "BOM (same as previous report)", fg
     cnt = Counter(cands.values())
-    best = max(cnt.items(), key=lambda kv: (kv[1], kv[0]))[0]
+    best = max(cnt.items(), key=lambda kv: (kv[1], -kv[0]))[0]   # most common; tie -> smaller pack
     fg = next(f for f, d in cands.items() if d == best)
     return best, "BOM (most common pack)", fg
 
