@@ -68,8 +68,20 @@ def to_frame(s: Sheet, rows) -> pd.DataFrame:
 
 
 def show_sheet(s: Sheet, idx: int) -> None:
-    if not s.headers:
+    if not any(sec.headers for sec in s.sections):
         st.info("Empty sheet")
+        return
+    if s.title_rows:
+        st.markdown(f"**{s.title_rows[0]}**")
+    for n, sec in enumerate(s.sections):
+        if sec.title:
+            st.markdown(f"##### {sec.title}")
+        show_table(sec, f"{idx}_{n}")
+
+
+def show_table(s, key: str) -> None:
+    """s is one table (Section): headers, rows, item_col."""
+    if not s.headers:
         return
     main_rows = [r for r in s.rows if r.type != "detail"]
     has_groups = any(r.type == "summary" for r in main_rows)
@@ -86,7 +98,7 @@ def show_sheet(s: Sheet, idx: int) -> None:
         if r.type == "summary":
             df.iat[i, s.item_col] = f"▸ {df.iat[i, s.item_col]}  ({r.count})"
     event = st.dataframe(df, hide_index=True, width="stretch",
-                         on_select="rerun", selection_mode="single-row", key=f"grid_{idx}")
+                         on_select="rerun", selection_mode="single-row", key=f"grid_{key}")
     sel = event.selection.rows if event and event.selection else []
     if sel:
         picked = main_rows[sel[0]]

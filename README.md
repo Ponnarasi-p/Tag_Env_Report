@@ -8,7 +8,7 @@ There are two versions of the same tool in this repo:
 * **Streamlit app** (`app.py`), the main one to deploy. See *Deploying on Streamlit* below.
 * **Static web page** (`index.html`) runs entirely in the browser, for hosts like GitHub Pages.
 
-Both apply exactly the same rules.
+The static page has not been updated for multi-section sheets (Daily Report), Daily Report percentages or the new colours; use the Streamlit app.
 
 ## Deploying on Streamlit
 
@@ -42,6 +42,12 @@ streamlit run app.py
 | 5–7 | Zero values become `-` | All sheets, including the 4th |
 | 6 | Decimals are rounded to the nearest whole number. | All sheets |
 | 8 | Styled header row, borders, banded rows, alignment (numbers right, text left), auto column widths, frozen header, filters, landscape print setup. | All sheets |
+
+Sheets with several tables, such as **Daily Report** (Master Roll, Slitting Process, Coating Process,
+Printing Process), keep every section title and heading row; each section is corrected on its own.
+"Grand Total" rows are recognised in any column. Percentage columns stored as fractions (0.15) are
+shown as whole percents (15) so rounding does not wipe them out. Colours follow the original report:
+green title, blue section titles, yellow headings, grey totals.
 
 Sheet order and names stay the same as the original. Any title lines above the header row are kept as a merged title.
 

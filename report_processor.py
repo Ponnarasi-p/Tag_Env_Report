@@ -96,6 +96,11 @@ def round_half_away(n: float) -> int:
     return -r if n < 0 and r else r
 
 
+def row_is_total(r: list) -> bool:
+    """A "Total" / "Grand Total" label in any text cell (it is not always in the item column)."""
+    return any(isinstance(v, str) and norm(v) in CONFIG["total_tokens"] for v in r)
+
+
 def detect_header_row(rows: list) -> int:
     limit = min(len(rows), 25)
     for r in range(limit):
@@ -118,14 +123,38 @@ class Row:
 
 
 @dataclass
-class Sheet:
-    name: str
-    kind: str
-    title_rows: list = field(default_factory=list)
+class Section:
+    """One table on a sheet: optional title row ("Master Roll"), heading row, data rows."""
+    title: str | None = None
     headers: list = field(default_factory=list)
     rows: list = field(default_factory=list)
     numeric_cols: list = field(default_factory=list)
     item_col: int = -1
+
+
+@dataclass
+class Sheet:
+    name: str
+    kind: str
+    title_rows: list = field(default_factory=list)
+    sections: list = field(default_factory=list)
+
+    # Shortcuts to the first table (most sheets have only one).
+    @property
+    def headers(self):
+        return self.sections[0].headers if self.sections else []
+
+    @property
+    def rows(self):
+        return self.sections[0].rows if self.sections else []
+
+    @property
+    def numeric_cols(self):
+        return self.sections[0].numeric_cols if self.sections else []
+
+    @property
+    def item_col(self):
+        return self.sections[0].item_col if self.sections else -1
 
 
 def process_workbook(sheets: list[tuple[str, list[list]]]) -> tuple[list[Sheet], list[dict]]:
@@ -138,26 +167,77 @@ def process_workbook(sheets: list[tuple[str, list[list]]]) -> tuple[list[Sheet],
     return out, log
 
 
+def _non_empty(r) -> list:
+    return [v for v in r if not is_empty(v)]
+
+
+def split_sections(rows: list[list]) -> tuple[list[str], list[tuple]]:
+    """
+    Returns (report title lines, [(section title or None, heading row, data rows), ...]).
+
+    A sheet such as "Daily Report" holds several tables, each with a one-cell title
+    row ("Master Roll", "Slitting Process", ...) followed by its own heading row.
+    """
+    header_idx = [i for i, r in enumerate(rows) if find_col(r, CONFIG["item_name"]) != -1]
+    if len(header_idx) <= 1:
+        h = header_idx[0] if header_idx else detect_header_row(rows)
+        titles = ["   ".join(str(v) for v in _non_empty(r)) for r in rows[:h] if _non_empty(r)]
+        return titles, [(None, rows[h], rows[h + 1:])]
+
+    starts = []  # (title text or None, index where the section starts, heading index)
+    prev_h = -1
+    for h in header_idx:
+        p = h - 1
+        while p > prev_h and not _non_empty(rows[p]):
+            p -= 1
+        cells = _non_empty(rows[p]) if p > prev_h else []
+        if len(cells) == 1 and isinstance(cells[0], str):
+            starts.append((cells[0].strip(), p, h))
+        else:
+            starts.append((None, h, h))
+        prev_h = h
+
+    first_start = starts[0][1]
+    titles = ["   ".join(str(v) for v in _non_empty(r)) for r in rows[:first_start] if _non_empty(r)]
+    sections = []
+    for i, (title, _start, h) in enumerate(starts):
+        end = starts[i + 1][1] if i + 1 < len(starts) else len(rows)
+        sections.append((title, rows[h], rows[h + 1:end]))
+    return titles, sections
+
+
 def process_sheet(name: str, raw_rows: list[list], log: list[dict]) -> Sheet:
     kind = sheet_kind(name)
-
-    def note(msg: str, level: str = "info"):
-        log.append({"sheet": name, "message": msg, "level": level})
-
     rows = [list(r or []) for r in raw_rows]
     while rows and all(is_empty(v) for v in rows[-1]):
         rows.pop()
     if not rows:
-        note("Sheet is empty; copied as-is.")
+        log.append({"sheet": name, "message": "Sheet is empty; copied as-is.", "level": "info"})
         return Sheet(name=name, kind=kind)
 
-    h = detect_header_row(rows)
-    title_rows = ["   ".join(str(v) for v in r if not is_empty(v))
-                  for r in rows[:h] if not all(is_empty(v) for v in r)]
-    headers = ["" if is_empty(v) else str(v).strip() for v in rows[h]]
-    width = max([len(headers)] + [len(r) for r in rows])
+    title_rows, parts = split_sections(rows)
+    multi = len(parts) > 1
+    if multi:
+        log.append({"sheet": name, "level": "info",
+                    "message": f"Found {len(parts)} sections: " + ", ".join(t or "(untitled)" for t, _, _ in parts) + "."})
+    sections = []
+    for title, header_row, data_rows in parts:
+        label = f"{name} › {title}" if multi and title else name
+
+        def note(msg: str, level: str = "info", _label=label):
+            log.append({"sheet": _label, "message": msg, "level": level})
+
+        sec = process_table(kind, header_row, data_rows, note, drop_unheaded=multi)
+        sec.title = title
+        sections.append(sec)
+    return Sheet(name=name, kind=kind, title_rows=title_rows, sections=sections)
+
+
+def process_table(kind: str, header_row: list, data_rows: list[list], note, drop_unheaded: bool = False) -> Section:
+    headers = ["" if is_empty(v) else str(v).strip() for v in header_row]
+    width = max([len(headers)] + [len(r) for r in data_rows])
     headers += [""] * (width - len(headers))
-    data = [[to_number_if_numeric(v) for v in (r + [None] * (width - len(r)))] for r in rows[h + 1:]]
+    data = [[to_number_if_numeric(v) for v in (r + [None] * (width - len(r)))] for r in data_rows]
 
     def drop_cols(pred) -> list[str]:
         nonlocal headers, data
@@ -169,9 +249,17 @@ def process_sheet(name: str, raw_rows: list[list], log: list[dict]) -> Sheet:
         data = [[v for ci, v in enumerate(r) if ci not in idx] for r in data]
         return removed
 
-    # Columns with neither a header nor any data.
-    keep = [hd != "" or any(not is_empty(r[ci]) for r in data) for ci, hd in enumerate(headers)]
-    drop_cols(lambda _hd, ci: not keep[ci])
+    if drop_unheaded:
+        # In a multi-table sheet, cells to the right of a table without a heading are
+        # side calculations, not part of the table.
+        stray = sum(1 for r in data for ci, v in enumerate(r) if headers[ci] == "" and not is_empty(v))
+        drop_cols(lambda hd, _ci: hd == "")
+        if stray:
+            note(f"Left out {stray} value(s) that sat outside the table under no heading.", "warn")
+    else:
+        # Columns with neither a header nor any data.
+        keep = [hd != "" or any(not is_empty(r[ci]) for r in data) for ci, hd in enumerate(headers)]
+        drop_cols(lambda _hd, ci: not keep[ci])
 
     # ---- Rule 3 / 4: column removal
     if kind in ("raw", "tagenv"):
@@ -184,7 +272,7 @@ def process_sheet(name: str, raw_rows: list[list], log: list[dict]) -> Sheet:
 
     item_col = find_col(headers, CONFIG["item_name"])
     if item_col == -1:
-        note('No "Item Name" column found; empty-row removal and grouping skipped for this sheet.', "warn")
+        note('No "Item Name" column found; empty-row removal and grouping skipped for this table.', "warn")
 
     # ---- Rule 2: Day Consumption tons -> kg, recompute No. of Days
     day_col = days_col = -1
@@ -199,6 +287,8 @@ def process_sheet(name: str, raw_rows: list[list], log: list[dict]) -> Sheet:
             day_col = ci
     if day_col != -1:
         stock_col = find_col(headers, CONFIG["stock"])
+        if stock_col == -1:  # e.g. "Master Reel Closing in Kgs"
+            stock_col = next((i for i, h in enumerate(headers) if "closing" in norm(h)), -1)
         converted = 0
         for r in data:
             t = r[day_col]
@@ -223,6 +313,18 @@ def process_sheet(name: str, raw_rows: list[list], log: list[dict]) -> Sheet:
                 note(f'"{headers[days_col]}" recalculated using Day Consumption in kg '
                      "(no stock column found, so the existing value was scaled by 1/1000).")
 
+    # ---- Percentages stored as fractions (0.15 = 15%) are shown as whole percents,
+    # otherwise rounding would turn every one of them into 0.
+    for ci, hd in enumerate(headers):
+        if "%" not in hd and "percent" not in hd.lower():
+            continue
+        nums = [r[ci] for r in data if is_num(r[ci])]
+        if nums and all(abs(v) <= 1 for v in nums) and any(v != 0 for v in nums):
+            for r in data:
+                if is_num(r[ci]):
+                    r[ci] = r[ci] * 100
+            note(f'"{hd}" held fractions (e.g. 0.15); shown as percentages (15).')
+
     # ---- Rule 1: remove rows that only have an item name
     serial_cols = [ci for ci, hd in enumerate(headers) if norm(hd) in CONFIG["serial_no"]]
     before = len(data)
@@ -236,8 +338,7 @@ def process_sheet(name: str, raw_rows: list[list], log: list[dict]) -> Sheet:
         if hd == -1:
             note('No "Holding Days" column found, so rows were not sorted.', "warn")
         else:
-            def raw_total(r):
-                return item_col != -1 and norm(r[item_col]) in CONFIG["total_tokens"]
+            raw_total = row_is_total
             body = [r for r in data if not raw_total(r)]
             body.sort(key=lambda r: (0, -r[hd]) if is_num(r[hd]) else (1, 0))  # stable for ties
             data = body + [r for r in data if raw_total(r)]
@@ -258,7 +359,7 @@ def process_sheet(name: str, raw_rows: list[list], log: list[dict]) -> Sheet:
         numeric_cols.append(nums > 0 and nums >= texts)
 
     def is_total(r):
-        return item_col != -1 and norm(r[item_col]) in CONFIG["total_tokens"]
+        return row_is_total(r)
 
     # ---- Rule 4: grouping on TagEnv
     if kind == "tagenv" and item_col != -1:
@@ -298,8 +399,7 @@ def process_sheet(name: str, raw_rows: list[list], log: list[dict]) -> Sheet:
                     headers[ci] = "QTY (kg)"
                 break
 
-    return Sheet(name=name, kind=kind, title_rows=title_rows, headers=headers, rows=out_rows,
-                 numeric_cols=numeric_cols, item_col=item_col)
+    return Section(headers=headers, rows=out_rows, numeric_cols=numeric_cols, item_col=item_col)
 
 
 def group_rows(data, headers, item_col, is_total, note) -> list[Row]:
