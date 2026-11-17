@@ -23,6 +23,8 @@ CONFIG = {
     "tagenv_remove": ["lotcode", "lotno", "lotnumber", "supplierlotno", "supplierlotnumber",
                       "width", "gsm", "sourcetype"],
     "qtn": ["qtn", "qtnkg", "qtnmt", "qtnton", "qtntons"],
+    # Quantity headings on the Raw Aging / TagEnv sheets that get "(kg)" added.
+    "qty_kg": ["qty", "qtn", "quantity"],
     "holding_days": ["holdingdays", "holdingday", "holddays"],
     "stock": ["stock", "stockkg", "closingstock", "currentstock", "stockqty", "balancestock",
               "availablestock", "stockinhand", "totalstock", "stockinkg"],
@@ -228,6 +230,19 @@ def process_sheet(name: str, raw_rows: list[list], log: list[dict]) -> Sheet:
             if any(not is_empty(v) for ci, v in enumerate(r) if ci != item_col and ci not in serial_cols)]
     if before - len(data):
         note(f"Removed {before - len(data)} row(s) with no details apart from the item name (or fully blank).")
+    # ---- Raw Aging Stock: Holding Days, highest first (Total rows stay last)
+    if kind == "raw":
+        hd = find_col(headers, CONFIG["holding_days"])
+        if hd == -1:
+            note('No "Holding Days" column found, so rows were not sorted.', "warn")
+        else:
+            def raw_total(r):
+                return item_col != -1 and norm(r[item_col]) in CONFIG["total_tokens"]
+            body = [r for r in data if not raw_total(r)]
+            body.sort(key=lambda r: (0, -r[hd]) if is_num(r[hd]) else (1, 0))  # stable for ties
+            data = body + [r for r in data if raw_total(r)]
+            note("Sorted by Holding Days (highest first).")
+
     for sc in serial_cols:  # renumber S.No
         n = 0
         for r in data:
@@ -272,6 +287,13 @@ def process_sheet(name: str, raw_rows: list[list], log: list[dict]) -> Sheet:
                 zeros += 1
     if zeros:
         note(f'Replaced {zeros} zero value(s) with "-".')
+
+    # ---- Quantity heading shows its unit, e.g. "QTY" -> "QTY (kg)"
+    if kind in ("raw", "tagenv"):
+        for ci, hd in enumerate(headers):
+            if norm(hd) in CONFIG["qty_kg"] and "kg" not in hd.lower():
+                headers[ci] = re.sub(r"\s*\([^)]*\)\s*$", "", hd) + " (kg)"
+                note(f'Renamed heading "{hd}" to "{headers[ci]}".')
 
     return Sheet(name=name, kind=kind, title_rows=title_rows, headers=headers, rows=out_rows,
                  numeric_cols=numeric_cols, item_col=item_col)

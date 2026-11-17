@@ -21,6 +21,8 @@
     rawAgingRemove: ['lotcode', 'lotno', 'lotnumber', 'supplierlotno', 'supplierlotnumber', 'category', 'gsm', 'qty', 'quantity', 'machineline'],
     tagEnvRemove: ['lotcode', 'lotno', 'lotnumber', 'supplierlotno', 'supplierlotnumber', 'width', 'gsm', 'sourcetype'],
     qtn: ['qtn', 'qtnkg', 'qtnmt', 'qtnton', 'qtntons'],
+    // Quantity headings on the Raw Aging / TagEnv sheets that get "(kg)" added.
+    qtyKg: ['qty', 'qtn', 'quantity'],
     holdingDays: ['holdingdays', 'holdingday', 'holddays', 'holdingdaysdays'],
     stock: ['stock', 'stockkg', 'closingstock', 'currentstock', 'stockqty', 'balancestock', 'availablestock', 'stockinhand', 'totalstock', 'stockinkg'],
     nullTokens: ['', 'null', 'nil', 'n/a', 'na', '#n/a', 'none', 'undefined', 'nan'],
@@ -199,6 +201,26 @@
     var removedRows = before - data.length;
     if (removedRows) note('Removed ' + removedRows + ' row(s) with no details apart from the item name (or fully blank).');
 
+    // ---- Raw Aging Stock: Holding Days, highest first (Total rows stay last)
+    if (kind === 'raw') {
+      var hdc = findCol(headers, CONFIG.holdingDays);
+      if (hdc === -1) note('No "Holding Days" column found, so rows were not sorted.', 'warn');
+      else {
+        var rawTotal = function (r) { return itemCol !== -1 && CONFIG.totalTokens.indexOf(norm(r[itemCol])) !== -1; };
+        var body = data.filter(function (r) { return !rawTotal(r); })
+          .map(function (r, i) { return { r: r, i: i }; })
+          .sort(function (a, b) {
+            var x = a.r[hdc], y = b.r[hdc], xn = typeof x === 'number', yn = typeof y === 'number';
+            if (xn && yn && x !== y) return y - x;
+            if (xn !== yn) return xn ? -1 : 1;
+            return a.i - b.i; // stable for ties
+          })
+          .map(function (o) { return o.r; });
+        data = body.concat(data.filter(rawTotal));
+        note('Sorted by Holding Days (highest first).');
+      }
+    }
+
     // Renumber S.No after removals.
     serialCols.forEach(function (sc) {
       var n = 0;
@@ -244,6 +266,16 @@
       });
     });
     if (zeros) note('Replaced ' + zeros + ' zero value(s) with "-".');
+
+    // ---- Quantity heading shows its unit, e.g. "QTY" -> "QTY (kg)"
+    if (kind === 'raw' || kind === 'tagenv') {
+      headers = headers.map(function (hd) {
+        if (CONFIG.qtyKg.indexOf(norm(hd)) === -1 || /kg/i.test(hd)) return hd;
+        var renamed = hd.replace(/\s*\([^)]*\)\s*$/, '') + ' (kg)';
+        note('Renamed heading "' + hd + '" to "' + renamed + '".');
+        return renamed;
+      });
+    }
 
     return { name: name, kind: kind, index: index, titleRows: titleRows, headers: headers, rows: outRows, numericCols: numericCols, itemCol: itemCol };
   }
