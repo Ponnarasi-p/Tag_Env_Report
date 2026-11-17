@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from .notes import Note
 from .readers import clean_name
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -142,7 +143,7 @@ class BomIndex:
             self.by_fg[fg].add(item)
             self.type_of[item] = t
         self.upper = {i.upper(): i for i in self.items}
-        self.anomalies: set[str] = set()
+        self.anomalies: set[tuple[str, str, float]] = set()
 
     def resolve(self, item: str, mjp_m4: dict[str, str]) -> str | None:
         if item in self.items:
@@ -161,7 +162,7 @@ class BomIndex:
         for fg, t, q in self.by_item.get(bom_item, []):
             tot = float(self.total.get((fg, t), q))
             if tot < 1:
-                self.anomalies.add(f"{fg} / {bom_item} = {q:g}")
+                self.anomalies.add((fg, bom_item, float(q)))
                 continue
             out[fg] = tot
         return out
@@ -184,12 +185,17 @@ def build(stock: pd.DataFrame, orders: pd.DataFrame, bom: pd.DataFrame, template
 
     # conversion factor per cases column
     conversion: dict[str, float] = {}
+    no_conv = []
     for col, spec in stock_cols.items():
         f = cfg["conversion_factors"].get(spec["conversion"])
         if f is None:
-            warnings.append(f"No conversion factor configured for '{spec['conversion']}' "
-                            f"(column {spec['cases_col']}); Make Cases left empty for that column.")
+            no_conv.append((f"{spec['group']} {'Tag' if spec['kind'] == 'TAG' else 'Envelope'}",
+                            spec["cases_col"], spec["conversion"]))
         conversion[spec["cases_col"]] = f
+    if no_conv:
+        warnings.append(Note("No conversion factor is set for these report columns; their Make Cases is left empty. "
+                             "Add the factor in Settings or config/settings.json",
+                             no_conv, ["Report column", "Excel column", "Machine line needed"]))
 
     # ---- rows from template -------------------------------------------------
     rows: list[Row] = []
@@ -215,14 +221,14 @@ def build(stock: pd.DataFrame, orders: pd.DataFrame, bom: pd.DataFrame, template
     pending_products = set(pending)
 
     audit = []
-    unmatched_items, skipped_lines, new_rows = [], Counter(), []
+    unmatched_items, skipped, new_rows, export_missing = [], [], {}, []
 
     # ---- place every stock item --------------------------------------------
     for _, s in stock.iterrows():
         item, ml, qty = s["item"], s["machine_line"], float(s["qty"])
         col = ml2col.get(ml)
         if col is None:
-            skipped_lines[ml or "(blank)"] += 1
+            skipped.append((item, ml or "(blank)", qty))
             continue
         up = item.upper()
         mapped = item_row_map.get(item)
@@ -232,8 +238,7 @@ def build(stock: pd.DataFrame, orders: pd.DataFrame, bom: pd.DataFrame, template
             er = export_rows.get(clean_name(key).upper())
             kind = item_kind(item, bidx.type_of.get(bidx.resolve(item, mjp_m4) or ""))
             if er is None:
-                warnings.append(f"Export item '{item}' ({qty:,.2f} kg) has no row on the "
-                                f"'{cfg['export_sheet']['name']}' sheet; add it to the template.")
+                export_missing.append((item, ml, qty))
                 continue
             er.found = True
             if kind == "TAG":
@@ -252,7 +257,7 @@ def build(stock: pd.DataFrame, orders: pd.DataFrame, bom: pd.DataFrame, template
             how = "item map"
             if row is None:  # mapped to a label the template does not have yet
                 row = new_row(mapped[1] + " ", mapped[1] + " ")
-                new_rows.append(row.label.strip())
+                new_rows[row.key] = row.label.strip()
                 how = "item map (new row)"
         if row is None:
             row = by_rowkey.get(row_key(item))
@@ -264,7 +269,7 @@ def build(stock: pd.DataFrame, orders: pd.DataFrame, bom: pd.DataFrame, template
             else:
                 label = item
             row = new_row(label, item)
-            new_rows.append(label.strip())
+            new_rows[row.key] = label.strip()
             unmatched_items.append(item)
             how = "new row"
         row.items[col].append(item)
@@ -323,22 +328,41 @@ def build(stock: pd.DataFrame, orders: pd.DataFrame, bom: pd.DataFrame, template
     else:
         missing_bom_items = pd.DataFrame(columns=["Item", "Machine Line", "Stock Kg", "Row", "Pcs/CFC Source"])
     if len(missing_bom_items):
-        warnings.append(f"{len(missing_bom_items)} item(s) are not available in the Exploded BOM, so their "
-                        "Make Cases shows N/A. Please submit a new Exploded BOM that includes them.")
-    if new_rows:
-        warnings.append(f"{len(new_rows)} new row(s) added for items not in the template: "
-                        + ", ".join(new_rows[:10]) + ("..." if len(new_rows) > 10 else ""))
-    if skipped_lines:
-        warnings.append("Ignored stock lines that are not Tag/Envelope machine lines: "
-                        + ", ".join(f"{k} ({v})" for k, v in skipped_lines.most_common()))
+        warnings.append(Note(
+            f"{len(missing_bom_items)} item(s) are not available in the Exploded BOM, so their Make Cases "
+            "shows N/A. Please submit a new Exploded BOM that includes them",
+            missing_bom_items.rename(columns={"Row": "Report Row", "Pcs/CFC Source": "Reason"})))
+    if export_missing:
+        warnings.append(Note(
+            f"{len(export_missing)} export item(s) have no row on the '{cfg['export_sheet']['name']}' sheet and "
+            "are not on the report; add them to the template",
+            export_missing, ["Item", "Machine Line", "Stock Kg"]))
+    if new_rows and len(audit_df):
+        nr = audit_df[audit_df["Row"].isin(set(new_rows.values()))]
+        warnings.append(Note(
+            f"{len(new_rows)} new row(s) were added for items that are not in the template",
+            [(r["Row"], r["Item"], r["Machine Line"], r["Stock Kg"]) for _, r in nr.iterrows()],
+            ["New Row", "Item", "Machine Line", "Stock Kg"]))
+    if skipped:
+        warnings.append(Note(
+            f"{len(skipped)} stock line(s) were ignored because their machine line is not a Tag/Envelope line",
+            sorted(skipped, key=lambda x: (x[1], x[0])), ["Item", "Machine Line", "Stock Kg"]))
     missing_fg = sorted(p for p in pending_products if p not in bidx.by_fg)
     if missing_fg:
-        warnings.append(f"{len(missing_fg)} pending-order product(s) are not in the Exploded BOM "
-                        "(their orders cannot steer Pcs per CFC): " + ", ".join(missing_fg[:6])
-                        + ("..." if len(missing_fg) > 6 else ""))
+        og = orders[orders["product"].isin(missing_fg)]
+        agg = og.groupby("product").agg(pending=("pending_qty", "sum"),
+                                        buyers=("buyer", lambda s: ", ".join(sorted(set(map(str, s.dropna())))))
+                                        if "buyer" in og else ("pending_qty", "size"))
+        warnings.append(Note(
+            f"{len(missing_fg)} ordered product(s) are not in the Exploded BOM, so their orders cannot be "
+            "linked to envelopes/tags (Pcs per CFC and remarks)",
+            [(p, float(agg.loc[p, "pending"]), agg.loc[p, "buyers"]) for p in missing_fg],
+            ["Ordered Product", "Pending Qty (CFC)", "Buyer(s)"]))
     if bidx.anomalies:
-        warnings.append(f"Exploded BOM has {len(bidx.anomalies)} tag/envelope line(s) under 1 piece per CFC "
-                        "(ignored as data errors): " + "; ".join(sorted(bidx.anomalies)[:5]))
+        warnings.append(Note(
+            f"Exploded BOM has {len(bidx.anomalies)} tag/envelope line(s) under 1 piece per CFC; "
+            "they were ignored as data errors",
+            sorted(bidx.anomalies), ["FG Name", "Item Name", "Qty per CFC in BOM"]))
     unused_export = [e.label for e in export_rows.values() if not e.found]
 
     summary = {

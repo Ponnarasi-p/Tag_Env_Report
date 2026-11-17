@@ -15,6 +15,7 @@ import openpyxl
 from openpyxl.utils import column_index_from_string as col_idx, get_column_letter
 
 from .engine import Result, Row
+from .notes import Note
 from .readers import clean_name
 
 DEN_RE = re.compile(r"/\s*(\d+(?:\.\d+)?)\s*$")
@@ -137,17 +138,17 @@ def _fmt_den(d):
     return int(d) if float(d).is_integer() else round(float(d), 4)
 
 
-def _strip_external(wb) -> int:
-    """Replace any formula pointing to another workbook with its value 0."""
-    n = 0
+def _strip_external(wb) -> list[tuple[str, str, str]]:
+    """Replace any formula pointing to another workbook with 0; return (sheet, cell, formula)."""
+    found = []
     for ws in wb.worksheets:
         for row in ws.iter_rows():
             for c in row:
                 if isinstance(c.value, str) and c.value.startswith("=") and "[" in c.value:
+                    found.append((ws.title, c.coordinate, c.value))
                     c.value = 0
-                    n += 1
     wb._external_links = []
-    return n
+    return found
 
 
 # --------------------------------------------------------------------------
@@ -198,15 +199,20 @@ def write_report(res: Result, cfg: dict, report_date: datetime | None, template_
         for k in keys[1:]:
             covered[(k, col)] = anchor
     rows_by_key = {r.key: r for r in res.rows}
+    moved = []
     for (k, col), anchor in covered.items():
         r = rows_by_key.get(k)
         if r and r.qty.get(col):
             a = rows_by_key[anchor]
             a.qty[col] += r.qty[col]
             a.items[col] += r.items[col]
-            notes.append(f"{', '.join(r.items[col])} ({r.qty[col]:,.2f} kg) sits inside the shared-tag block "
-                         f"of '{a.label.strip()}' and was added to that block.")
+            for it in r.items[col]:
+                moved.append((it, r.label.strip(), a.label.strip(), col, r.qty[col]))
             r.qty[col] = 0
+    if moved:
+        notes.append(Note(f"{len(moved)} item(s) fall inside a shared-tag block and were added to the block's "
+                          "first row (merged cell)", moved,
+                          ["Item", "Its own row", "Added to block row", "Column", "Stock Kg"]))
 
     # ---- data rows ----------------------------------------------------------
     cur = first
@@ -265,7 +271,8 @@ def write_report(res: Result, cfg: dict, report_date: datetime | None, template_
     fr = ws.freeze_panes
     if fr and int(re.sub(r"\D", "", fr) or 0) > first:
         ws.freeze_panes = f"B{first}"
-        notes.append(f"Freeze panes in the template was at {fr} (inside the data); set to B{first}.")
+        notes.append(Note(f"Freeze panes in the template was at {fr} (inside the data rows); "
+                          f"it was set to B{first} so the headers stay visible"))
 
     # ---- hidden stock sheets -----------------------------------------------
     # both sheets share row order; the short sheet's labels match the main sheet
@@ -283,9 +290,10 @@ def write_report(res: Result, cfg: dict, report_date: datetime | None, template_
     # ---- export sheet -------------------------------------------------------
     _write_export_sheet(wb[cfg["export_sheet"]["name"]], res, cfg)
 
-    n_ext = _strip_external(wb)
-    if n_ext:
-        notes.append(f"{n_ext} leftover link(s) to an external workbook were replaced with 0.")
+    ext = _strip_external(wb)
+    if ext:
+        notes.append(Note(f"{len(ext)} cell(s) still linked to another workbook were set to 0",
+                          ext, ["Sheet", "Cell", "Original formula"]))
     wb.calculation.fullCalcOnLoad = True
     out = io.BytesIO()
     wb.save(out)

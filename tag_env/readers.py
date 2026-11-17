@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from .notes import Note
+
 
 class InputError(ValueError):
     """Raised when an uploaded file cannot be used."""
@@ -120,21 +122,27 @@ def read_stock_summary(src) -> tuple[pd.DataFrame, datetime | None, list[str]]:
         df["machine_line"] = df["machine_line"].map(clean_name)
         df = df[df["item"] != ""]
         bad_qty = pd.to_numeric(df["qty"], errors="coerce")
-        n_bad = int(bad_qty.isna().sum())
-        if n_bad:
-            warnings.append(f"Stock Summary: {n_bad} row(s) have an empty or non-numeric Qty; treated as 0.")
+        bad = df[bad_qty.isna()]
+        if len(bad):
+            warnings.append(Note(
+                f"Stock Summary: {len(bad)} item(s) have an empty or non-numeric Qty, treated as 0",
+                [(r.item, r.machine_line, "" if pd.isna(r.qty) else str(r.qty)) for r in bad.itertuples()],
+                ["Item", "Machine Line", "Qty in file"]))
         df["qty"] = bad_qty.fillna(0.0).astype(float)
         neg = df[df["qty"] < 0]
         if len(neg):
-            warnings.append(f"Stock Summary: {len(neg)} item(s) have negative stock: "
-                            + ", ".join(neg["item"].head(5)) + ("..." if len(neg) > 5 else ""))
+            warnings.append(Note(f"Stock Summary: {len(neg)} item(s) have negative stock",
+                                 neg[["item", "machine_line", "qty"]].set_axis(["Item", "Machine Line", "Stock Kg"], axis=1)))
         dup = df[df.duplicated("item", keep=False)]
         if len(dup):
-            warnings.append(f"Stock Summary: {dup['item'].nunique()} item(s) appear more than once; "
-                            "their quantities were added together: " + ", ".join(dup["item"].unique()[:5]))
+            g = dup.groupby(["item", "machine_line"], sort=False)["qty"].agg(times="size", total="sum").reset_index()
+            warnings.append(Note(
+                f"Stock Summary: {dup['item'].nunique()} item(s) appear more than once; their quantities were added together",
+                [(it, ml, int(n), float(t)) for it, ml, n, t in g[["item", "machine_line", "times", "total"]].values],
+                ["Item", "Machine Line", "Times listed", "Total Kg used"]))
             df = df.groupby(["item", "machine_line"], as_index=False, sort=False)["qty"].sum()
         if report_date is None:
-            warnings.append("Stock Summary: report date not found in the header; using today's date.")
+            warnings.append(Note("Stock Summary: report date not found in the file header; today's date was used"))
         return df[["item", "machine_line", "qty"]].reset_index(drop=True), report_date, warnings
     raise InputError("Stock Summary Report: could not find the header row with columns "
                      + ", ".join(STOCK_REQUIRED) + ". Is this the right file?")
@@ -169,7 +177,8 @@ def read_order_status(src) -> tuple[pd.DataFrame, list[str]]:
         df["pending_qty"] = pd.to_numeric(df["pending_qty"], errors="coerce").fillna(0)
         df = df[df["pending_qty"] > 0]
         if df.empty:
-            warnings.append(f"Order Status ({name}): no lines with a pending quantity.")
+            warnings.append(Note(f"Order Status (sheet '{name}'): no order lines have a pending quantity, "
+                                 "so no remark can be 'Order Received' and Pcs per CFC comes from the BOM only"))
         cols = [c for c in ["order_id", "buyer", "prod_id", "product", "pending_qty", "order_status"] if c in df]
         return df[cols].reset_index(drop=True), warnings
     raise InputError("Order Status Report: no sheet has the columns 'Prod Name' and 'Pending Ord Qty'. "
@@ -198,15 +207,25 @@ def read_exploded_bom(src) -> tuple[pd.DataFrame, list[str]]:
             df[c] = df[c].map(clean_name)
         df["item_type"] = df["item_type"].str.upper()
         df["fg_uom"] = df["fg_uom"].str.upper()
+        raw_qty = df["qty"]
         df["qty"] = pd.to_numeric(df["qty"], errors="coerce")
-        n_bad = int(df["qty"].isna().sum())
         df = df[(df["fg"] != "") & (df["item"] != "")]
-        if n_bad:
-            warnings.append(f"Exploded BOM: {n_bad} line(s) have no numeric Qty and were skipped.")
+        bad = df[df["qty"].isna()]
+        if len(bad):
+            warnings.append(Note(
+                f"Exploded BOM: {len(bad)} line(s) have no numeric Qty and were skipped",
+                [(r.fg, r.item, r.item_type, str(raw_qty.get(i, ""))) for i, r in bad.iterrows()],
+                ["FG Name", "Item Name", "Item Type", "Qty in file"]))
         df = df.dropna(subset=["qty"])
         dup = df.duplicated(["fg", "item"], keep="first")
         if dup.any():
-            warnings.append(f"Exploded BOM ({name}): {int(dup.sum())} duplicate FG/item line(s) ignored.")
+            kept = df[~dup].set_index(["fg", "item"])["qty"]
+            warnings.append(Note(
+                f"Exploded BOM (sheet '{name}'): {int(dup.sum())} FG/item line(s) are listed twice; "
+                "the first line was used and the repeat ignored",
+                [(r.fg, r.item, r.item_type, float(kept.get((r.fg, r.item))), float(r.qty))
+                 for r in df[dup].itertuples()],
+                ["FG Name", "Item Name", "Item Type", "Qty used", "Repeated Qty ignored"]))
             df = df[~dup]
         return df[["fg", "item", "item_type", "qty", "uom", "fg_uom"]].reset_index(drop=True), warnings
     raise InputError("Exploded BOM: could not find the header row with columns " + ", ".join(BOM_REQUIRED) + ".")

@@ -10,6 +10,7 @@ import pandas as pd
 import streamlit as st
 
 from tag_env import engine, pipeline, readers
+from tag_env.notes import as_note
 
 st.set_page_config(page_title="Tag Env Stock Report", page_icon="📦", layout="wide")
 
@@ -152,13 +153,32 @@ if rep is not None:
                  "shows **N/A** in the report. Please submit a new Exploded BOM that includes these "
                  "items and generate the report again.")
         st.dataframe(missing, width="stretch", hide_index=True,
-                     height=min(400, 38 + 35 * len(missing)))
+                     height=min(600, 38 + 35 * len(missing)))
 
-    all_w = rep.input_warnings + rep.warnings
+    # every warning: title + the full list of affected items
+    all_w = [as_note(w) for w in rep.input_warnings + rep.warnings]
+    other_w = [w for w in all_w if "not available in the Exploded BOM" not in w.title]
+    if other_w:
+        st.subheader(f"Warnings and processing notes ({len(other_w)})")
+        for i, w in enumerate(other_w, start=1):
+            n = len(w.table)
+            with st.expander(f"⚠️ {i}. {w.title}" + (f"  · {n} line{'s' if n != 1 else ''} below" if n else ""),
+                             expanded=False):
+                if n:
+                    st.dataframe(w.table, width="stretch", hide_index=True,
+                                 height=min(600, 38 + 35 * n))
+                else:
+                    st.write(w.title)
     if all_w:
-        with st.expander(f"Warnings and processing notes ({len(all_w)})", expanded=True):
-            for w in all_w:
-                st.warning(w)
+        wbuf = io.BytesIO()
+        with pd.ExcelWriter(wbuf, engine="openpyxl") as xw:
+            pd.DataFrame({"#": range(1, len(all_w) + 1), "Warning": [w.title for w in all_w],
+                          "Items": [len(w.table) for w in all_w]}).to_excel(xw, sheet_name="Summary", index=False)
+            for i, w in enumerate(all_w, start=1):
+                if len(w.table):
+                    w.table.to_excel(xw, sheet_name=f"Warning {i}", index=False)
+        st.download_button("Download all warnings (Excel)", wbuf.getvalue(),
+                           file_name=rep.file_name.replace(".xlsx", " - warnings.xlsx"))
 
     t1, t2, t3 = st.tabs(["Report preview", "Item calculation detail", "Format check"])
     with t1:
