@@ -1,0 +1,88 @@
+{
+  "_comment": "Edit this file to change conversion factors or column mappings. No code change needed.",
+
+  "conversion_factors": {
+    "_source": "Machine Line conversion reference table (Conversion Round Off, Pcs per Kg)",
+    "Constanta Envelope": 1525,
+    "MD-20 Crimp Envelope": 1700,
+    "MD HS Envelope Paper": 1425,
+    "MD HS Envelope Foil": 1190,
+    "Perfecta Envelope (PENV)": 1520,
+    "Maisa Envelope": 1410,
+    "CONSTANTA-250": 1740,
+    "CONSTANTA FAMILY SIZE": 6320,
+    "Constanta Tag Big": 6040,
+    "MD-20 Tag": 12600,
+    "Maisa Tag": 9080,
+    "PERFACTA TAG & PK-45 & Constanta Tag": 10780
+  },
+
+  "_main_sheet_comment": "Env & Tag Stock sheet. Each stock column has a Make Cases column next to it; row 4 of the Make Cases column holds the conversion factor of the machine line named here.",
+  "main_sheet": {
+    "name": "Env & Tag Stock",
+    "header_rows": 4,
+    "conversion_row": 4,
+    "label_col": "A",
+    "remarks_col": "AM",
+    "stock_columns": {
+      "B":  {"group": "C250",          "kind": "TAG", "cases_col": "C",  "conversion": "PERFACTA TAG & PK-45 & Constanta Tag"},
+      "D":  {"group": "C250",          "kind": "ENV", "cases_col": "E",  "conversion": "CONSTANTA-250"},
+      "H":  {"group": "MD20",          "kind": "TAG", "cases_col": "I",  "conversion": "MD-20 Tag"},
+      "J":  {"group": "MD20",          "kind": "ENV", "cases_col": "K",  "conversion": "MD-20 Crimp Envelope"},
+      "N":  {"group": "Constanta",     "kind": "ENV", "cases_col": "O",  "conversion": "Constanta Envelope"},
+      "R":  {"group": "Perfecta",      "kind": "ENV", "cases_col": "S",  "conversion": "Perfecta Envelope (PENV)"},
+      "V":  {"group": "MD20 HS",       "kind": "TAG", "cases_col": "W",  "conversion": "MD-20 Tag"},
+      "X":  {"group": "MD20 HS",       "kind": "ENV", "cases_col": "Y",  "conversion": "MD HS Envelope Paper"},
+      "AB": {"group": "Maisa",         "kind": "TAG", "cases_col": "AC", "conversion": "Maisa Tag"},
+      "AD": {"group": "Maisa",         "kind": "ENV", "cases_col": "AE", "conversion": "Maisa Envelope"},
+      "AH": {"group": "Perfecta/PK45", "kind": "TAG", "cases_col": "AI", "conversion": "PERFACTA TAG & PK-45 & Constanta Tag"}
+    },
+    "max_columns": {
+      "F":  ["C", "E"],
+      "L":  ["I", "K"],
+      "P":  ["O"],
+      "T":  ["S"],
+      "Z":  ["W", "Y"],
+      "AF": ["AC", "AE"],
+      "AJ": ["AI"]
+    },
+    "total_can_make": {"col": "AL", "sum_of": ["F", "L", "P", "T"]}
+  },
+
+  "_machine_line_comment": "Stock Summary 'Machine Line Name' -> stock column on the main sheet. Lines not listed (paper, ink, divider...) are ignored.",
+  "machine_line_to_column": {
+    "Constanta Envelope": "N",
+    "CONSTANTA-250": "D",
+    "Constanta Tag": "B",
+    "MD-20 Crimp Envelope": "J",
+    "MD-20 Tag": "H",
+    "Perfecta Envelope (PENV)": "R",
+    "MD HS Envelope": "X",
+    "MD HS Tag": "V",
+    "Maisa Envelope": "AD",
+    "Maisa Tag": "AB",
+    "PERFACTA TAG": "AH",
+    "PK-45": "AH"
+  },
+
+  "_stock_sheet_comment": "Hidden 'Tag & Env Stock' sheets: main-sheet stock column -> column on these sheets.",
+  "stock_sheets": {
+    "names": {"short": "Tag & Env Stock", "full": "Tag & Env Stock (2)"},
+    "header_rows": 3,
+    "remarks_col": "S",
+    "column_map": {"N": "B", "D": "D", "B": "E", "J": "G", "H": "H", "R": "J", "X": "L", "V": "M", "AD": "O", "AB": "P", "AH": "R"}
+  },
+
+  "export_sheet": {
+    "name": "Ghana & AB & AG Stock",
+    "_comment": "Items whose name contains one of these markers go to the export stock sheet instead of the main sheet.",
+    "markers": ["(GHANA)", "(ABIDJAN)", "(ANGOLA)"],
+    "env_col": "B",
+    "tag_col": "C"
+  },
+
+  "denominator": {
+    "_comment": "Pcs per CFC = total ENV (or TAG) pieces in one CFC of the chosen FG, from the Exploded BOM.",
+    "fg_uom": "CFC"
+  }
+}
