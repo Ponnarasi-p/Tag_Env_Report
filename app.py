@@ -1,7 +1,9 @@
 """Streamlit app: upload the aging stock report, download the corrected Excel."""
 from __future__ import annotations
 
+import hashlib
 import re
+from pathlib import Path
 from datetime import date, datetime
 
 import pandas as pd
@@ -26,8 +28,19 @@ RULES = """
 """
 
 
+def _rules_version() -> str:
+    """Hash of the rule/IO modules, so cached results are dropped whenever the rules change."""
+    h = hashlib.sha1()
+    for mod in ("report_processor.py", "excel_reader.py", "excel_writer.py"):
+        h.update((Path(__file__).parent / mod).read_bytes())
+    return h.hexdigest()[:10]
+
+
+RULES_VERSION = _rules_version()
+
+
 @st.cache_data(show_spinner=False, max_entries=5)
-def run(name: str, data: bytes):
+def run(name: str, data: bytes, rules_version: str):
     sheets, log = process_workbook(read_sheets(name, data))
     return sheets, log, build_workbook(sheets)
 
@@ -98,7 +111,7 @@ if uploaded is None:
 
 try:
     with st.spinner(f"Processing {uploaded.name}…"):
-        sheets, log, xlsx = run(uploaded.name, uploaded.getvalue())
+        sheets, log, xlsx = run(uploaded.name, uploaded.getvalue(), RULES_VERSION)
 except Exception as e:  # show a friendly message instead of a stack trace
     st.error(f"Could not process this file: {e}")
     st.stop()
