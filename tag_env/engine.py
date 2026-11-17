@@ -290,6 +290,9 @@ def build(stock: pd.DataFrame, orders: pd.DataFrame, bom: pd.DataFrame, template
             row.denom_source[col] = chosen[1] + (f" [{chosen[2]}]" if chosen[2] else "")
     # cells without stock have no item, so no Pcs per CFC (Make Cases is 0)
 
+    # ---- remarks: Order Received / No Order --------------------------------
+    order_by_row = _order_remarks(rows, bidx, mjp_m4, pending_products)
+
     # ---- audit enrichment ---------------------------------------------------
     for a in audit:
         if a["Sheet"] != main["name"]:
@@ -302,6 +305,8 @@ def build(stock: pd.DataFrame, orders: pd.DataFrame, bom: pd.DataFrame, template
                   "Conversion (Pcs/Kg)": f, "Pcs per CFC (BOM)": d, "Pcs/CFC Source": src, "FG Used": fg,
                   "Pending Order Qty (FG)": pending.get(fg, 0) if fg else 0,
                   "Make Cases": (a["Stock Kg"] * f / d) if (d and f) else None})
+        rk = clean_name(a["Row"]).upper()
+        a["Remark"], a["Ordered Product(s)"] = order_by_row.get(rk, (REMARK_NO_ORDER, ""))
     audit_df = pd.DataFrame(audit)
 
     # ---- new rows go in alphabetically, like the manual report ------------
@@ -353,6 +358,43 @@ def build(stock: pd.DataFrame, orders: pd.DataFrame, bom: pd.DataFrame, template
 
 
 NOT_IN_BOM = "Not available in BOM"
+REMARK_ORDER = "Order Received"
+REMARK_NO_ORDER = "No Order"
+_PACK_RE = re.compile(r"\s+\d+\s*/\s*\d+.*$")   # " 24/25 DC SF ENV TBGS ..." after the brand
+
+
+def _product_base(product: str) -> str:
+    """'AFRICA CHOICE 24/25 DC ENV TBGS' -> 'AFRICA CHOICE' (normalised like row labels)."""
+    return row_key(_PACK_RE.sub("", clean_name(product)))
+
+
+def _order_remarks(rows: list[Row], bidx: BomIndex, mjp_m4, pending_products) -> dict:
+    """Row key -> (remark, ordered products that gave it).
+
+    A row is 'Order Received' when the Order Status report has a pending order for
+    a finished good that (a) uses one of the row's envelopes/tags in the BOM, or
+    (b) has the same brand name as the row (name before the pack size).
+    Otherwise 'No Order'.
+    """
+    by_base: dict[str, list[str]] = defaultdict(list)
+    for p in pending_products:
+        by_base[_product_base(p)].append(p)
+    out = {}
+    for r in rows:
+        hits = set()
+        all_items = [it for its in r.items.values() for it in its]
+        # envelopes identify the product; tags are often shared by many flavours,
+        # so they are used only on rows that hold tags alone
+        env_items = [it for it in all_items if item_kind(it, bidx.type_of.get(bidx.resolve(it, mjp_m4) or "")) == "ENV"]
+        for it in (env_items or all_items):
+            b = bidx.resolve(it, mjp_m4)
+            if b:
+                hits |= {fg for fg, _, _ in bidx.by_item.get(b, []) if fg in pending_products}
+        hits |= set(by_base.get(row_key(r.label), []))
+        r.remark = REMARK_ORDER if hits else REMARK_NO_ORDER
+        r.stock_remark = r.remark
+        out[r.key] = (r.remark, "; ".join(sorted(hits)[:5]) + (" ..." if len(hits) > 5 else ""))
+    return out
 
 
 def _denominator(item, bidx: BomIndex, mjp_m4, pending, pending_products):

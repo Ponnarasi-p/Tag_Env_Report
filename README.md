@@ -58,7 +58,9 @@ Every number comes from the three uploaded files. The template supplies only the
 **Shared tags** (e.g. one GV FLAVOUR tag for all GV envelopes) are written once and merged
 down over the rows that share them, using the template's merged blocks.
 
-**Remarks** are left blank for the user to fill in.
+**Remarks**: "Order Received" when the Order Status report has a pending order for a finished
+good that uses the row's envelope (from the BOM) or has the same brand name as the row (name
+before the pack size, e.g. "AFRICA CHOICE 24/25 ..."); otherwise "No Order".
 
 ## Validation done
 

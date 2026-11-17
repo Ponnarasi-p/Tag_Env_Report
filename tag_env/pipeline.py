@@ -44,12 +44,13 @@ def preview_frame(res: engine.Result, cfg: dict) -> pd.DataFrame:
             rec[f"{name} Cases"] = round(cases[spec["cases_col"]], 1) if (q and d) else None
         mx = {m: max(cases.get(c, 0.0) for c in src) for m, src in main["max_columns"].items()}
         rec["Total Can Make"] = round(sum(mx[c] for c in main["total_can_make"]["sum_of"]), 1)
+        rec["Remarks"] = r.remark
         rec["N/A (not in BOM)"] = ", ".join(not_in_bom)
         rec["New Row"] = "Yes" if r.is_new else ""
         recs.append(rec)
     df = pd.DataFrame(recs)
     # drop columns that are empty for every row so the preview stays readable
-    keep = [c for c in df.columns if c in ("Brand", "Total Can Make", "N/A (not in BOM)", "New Row")
+    keep = [c for c in df.columns if c in ("Brand", "Total Can Make", "Remarks", "N/A (not in BOM)", "New Row")
             or df[c].fillna(0).astype(float).abs().sum() > 0]
     return df[keep]
 
