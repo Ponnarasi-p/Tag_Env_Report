@@ -42,15 +42,24 @@ Make Cases = (Available Kg × Conversion factor) / Pcs per CFC
 
 - *Conversion factor*: the column's machine line from the conversion reference table, kept
   in row 4 of the main sheet and in `config/settings.json`.
-- *Pcs per CFC*: from the Exploded BOM. The total ENV (or TAG) pieces in one CFC of the
-  finished good the item is used in. A variety pack with three flavours of 80 envelopes gives
-  240, which is what the manual report uses.
-- When an item is in several finished goods:
-  1. a finished good with a **pending order** wins (largest pending quantity);
-  2. else the most common pack size in the BOM (on a tie, the smaller pack).
-- **Item not in the uploaded BOM: Make Cases shows `N/A`.** The app lists these items and asks
-  for a new Exploded BOM. No value is taken from an older report.
-- BOM lines under 1 piece per CFC (data errors, e.g. `0.0072`) are ignored; the item shows `N/A`.
+- *Pcs per CFC*: the pack size in the name of the finished good (FG) the envelope/tag is used
+  in: `GV MINT 48/25 DC ENV TBGS` → 48 × 25 = **1200**. (If an FG name has no `n/m`, the BOM's
+  pieces per CFC is used.)
+- How the FG is found for an item, in order:
+  1. the item is in the Exploded BOM, directly or through the MJP vs M4 item-name mapping;
+  2. a BOM item with the same name once pack/machine words are removed
+     (`TAG PACIFICO DC SF TBGS` = BOM `TAG PACIFICO DC TBGS`; MD-20 and C250 versions of one flavour);
+  3. FG names in the BOM or Order Status whose brand/flavour before the pack size equals the item's
+     (`ENV FESTIVA GINGER DC ENV TBGS` → `FESTIVA GINGER 24/25 DC ENV TBGS`);
+  4. the longest FG brand the item name starts with
+     (`ALDI VRUCHTENTHEE RASPBERRY` → `ALDI VRUCHTENTHEE 24/20 ...`);
+  5. FG names that start with the item's brand (`ENV ELANI` → `ELANI GREEN TEA 24/25 ...`);
+  6. otherwise the pack size of the same row's other envelope/tag.
+- When an item is in several FGs: an FG with a **pending order** wins (largest pending quantity);
+  else the most common pack size (on a tie, the smaller pack).
+- **No FG found at all: Make Cases shows `N/A`**, and the app lists the item and asks for a new
+  Exploded BOM. No value is taken from an older report.
+- The calculation detail shows, for every item, the FG name used and how it was found.
 
 Every number comes from the three uploaded files. The template supplies only the layout
 (sheets, headers, formatting, row order, shared-tag blocks).
@@ -72,13 +81,13 @@ generated report was compared with the manually prepared *Tag_Env_Stock_as_on_06
 | Rows and row order (207 rows) | identical |
 | Merged cells | identical |
 | Stock Kg per row/column (270 cells) | 270 / 270 match |
-| Pcs per CFC denominators (270 cells) | 237 same, 30 `N/A` (not in BOM), 3 different |
-| Excel recalculation | 0 errors |
+| Pcs per CFC denominators (270 cells) | 259 same, 11 different, 0 `N/A` |
+| Excel recalculation | 0 errors, 0 `N/A` |
 | Structure/format checks vs template | 25 / 25 pass |
 
-The 30 `N/A` cells are items missing from the 20-08 BOM (the manual report typed a value).
-The 3 different are items with no pending order where the BOM has several pack sizes and the
-manual report picked another one (AL FINA GREEN TEA LEMON, CHAYA PINEAPPLE, VICTORIA).
+The 11 differences are cells where the manual report used a different pack size from the FG
+names available (e.g. TAG PACIFICO: FG `PACIFICO 12/20` = 240, manual 1200; KHAIMA DC SF: FG
+`KHAIMA 12/106` = 1272, manual 1125/1200), or items with several pack sizes and no pending order.
 
 `tests/test_unseen_inputs.py` runs the generator on inputs it has never seen (new brand,
 moved header, no orders, removed items, duplicates, wrong files).

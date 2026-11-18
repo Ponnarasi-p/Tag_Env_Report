@@ -4,9 +4,10 @@ Make Cases calculation.
 Make Cases = (Available KG x Conversion factor of the column's machine line)
              / Pcs per CFC
 
-Pcs per CFC comes from the Exploded BOM: the total ENV (or TAG) pieces in one
-CFC of the finished good (FG) the item is used in. A variety pack holding
-three flavours of 80 envelopes therefore gives 240, matching the manual report.
+Pcs per CFC is the pack size in the name of the finished good (FG) the item is
+used in: 'GV MINT 48/25 DC ENV TBGS' -> 48 x 25 = 1200. The FG is found through
+the Exploded BOM, the MJP vs M4 item-name mapping, or by name against the BOM
+and Order Status FG names (see FgLinker).
 
 Which FG is used when an item is in several:
   1. an FG with a pending order (largest pending quantity wins);
@@ -278,6 +279,7 @@ def build(stock: pd.DataFrame, orders: pd.DataFrame, bom: pd.DataFrame, template
                       "Row": row.label.strip(), "Column": col, "Matched By": how})
 
     # ---- denominators -------------------------------------------------------
+    linker = FgLinker(bidx, mjp_m4, pending_products)
     item_denoms: dict[str, tuple[float | None, str, str]] = {}
     for row in rows:
         for col, items in row.items.items():
@@ -287,12 +289,26 @@ def build(stock: pd.DataFrame, orders: pd.DataFrame, bom: pd.DataFrame, template
             items_sorted = sorted(items, key=lambda it: -float(stock.loc[stock["item"] == it, "qty"].sum()))
             chosen = None
             for it in items_sorted:
-                d, src, fg = _denominator(it, bidx, mjp_m4, pending, pending_products)
+                d, src, fg = _denominator(it, row.label, linker, pending, pending_products)
                 item_denoms[it] = (d, src, fg)
                 if chosen is None or (chosen[0] is None and d is not None):
                     chosen = (d, src, fg)
             row.denom[col] = chosen[0]
             row.denom_source[col] = chosen[1] + (f" [{chosen[2]}]" if chosen[2] else "")
+        # an item with no FG of its own takes the pack size of the same row's other
+        # envelope/tag (same brand and flavour, e.g. JUMBO MANGO on MD-20 vs C250)
+        known = {c: (row.denom[c], row.denom_source.get(c, "")) for c in row.denom if row.denom.get(c)}
+        for col in [c for c in row.denom if not row.denom.get(c)]:
+            same_kind = [c for c in known if stock_cols[c]["kind"] == stock_cols[col]["kind"]]
+            pick = (same_kind or list(known))[:1]
+            if pick:
+                d, srcd = known[pick[0]]
+                fg = srcd[srcd.find("[") + 1:-1] if "[" in srcd else ""
+                row.denom[col] = d
+                row.denom_source[col] = f"Same row ({stock_cols[pick[0]]['group']}) [{fg}]"
+                for it in row.items[col]:
+                    item_denoms[it] = (d, f"Same row as {stock_cols[pick[0]]['group']} "
+                                          f"{'tag' if stock_cols[pick[0]]['kind'] == 'TAG' else 'envelope'}", fg)
     # cells without stock have no item, so no Pcs per CFC (Make Cases is 0)
 
     # ---- remarks: Order Received / No Order --------------------------------
@@ -421,22 +437,93 @@ def _order_remarks(rows: list[Row], bidx: BomIndex, mjp_m4, pending_products) ->
     return out
 
 
-def _denominator(item, bidx: BomIndex, mjp_m4, pending, pending_products):
-    """Pcs per CFC from the uploaded BOM only. Nothing is taken from older reports."""
-    bom_item = bidx.resolve(item, mjp_m4)
-    if bom_item is None:
-        return None, NOT_IN_BOM, ""
-    cands = bidx.candidates(bom_item)
+_PACK_NUM_RE = re.compile(r"(?<![\d.])(\d+)\s*/\s*(\d+)(?:\s*/\s*(\d+))?(?![\d.])")
+
+
+def pack_from_name(fg: str) -> float | None:
+    """Pcs per CFC written in the FG name: 'GV MINT 48/25 DC ENV TBGS' -> 48 x 25 = 1200."""
+    m = _PACK_NUM_RE.search(fg or "")
+    if not m:
+        return None
+    v = 1
+    for g in m.groups():
+        if g:
+            v *= int(g)
+    return float(v)
+
+
+class FgLinker:
+    """Finds the finished goods (FG names) an envelope/tag belongs to.
+
+    1. the item is in the BOM (directly, or via the MJP vs M4 name mapping);
+    2. a BOM item with the same name once pack/machine words are removed
+       (e.g. 'TAG PACIFICO DC SF TBGS' = BOM 'TAG PACIFICO DC TBGS');
+    3. FG names (BOM + Order Status) whose brand/flavour before the pack size
+       equals the item's (e.g. ENV FESTIVA GINGER -> 'FESTIVA GINGER 24/25 ...');
+    4. the longest FG brand (2+ words) that the item name starts with
+       (e.g. ALDI VRUCHTENTHEE RASPBERRY -> 'ALDI VRUCHTENTHEE 24/20 ...');
+    5. FG names that start with the item's brand (ENV ELANI -> 'ELANI GREEN TEA 24/25 ...').
+    """
+
+    def __init__(self, bidx: BomIndex, mjp_m4: dict, order_products):
+        self.bidx, self.mjp = bidx, mjp_m4
+        self.by_key: dict[str, set[str]] = defaultdict(set)
+        for it in bidx.items:
+            self.by_key[row_key(it)].add(it)
+        self.by_base: dict[str, set[str]] = defaultdict(set)
+        for fg in set(bidx.by_fg) | set(order_products):
+            self.by_base[_product_base(fg)].add(fg)
+
+    def fgs(self, item: str, row_label: str) -> tuple[set[str], str]:
+        b = self.bidx.resolve(item, self.mjp)
+        if b:
+            return {fg for fg, _, _ in self.bidx.by_item.get(b, [])}, "BOM"
+        for key in filter(None, [row_key(item), row_key(self.mjp.get(item, ""))]):
+            its = self.by_key.get(key)
+            if its:
+                return {fg for it in its for fg, _, _ in self.bidx.by_item.get(it, [])}, "BOM (name match)"
+        for key in filter(None, [row_key(item), row_key(self.mjp.get(item, "")), row_key(row_label)]):
+            if self.by_base.get(key):
+                return set(self.by_base[key]), "FG name match"
+        words = row_key(item).split()
+        for n in range(len(words) - 1, 1, -1):
+            if self.by_base.get(" ".join(words[:n])):
+                return set(self.by_base[" ".join(words[:n])]), "FG name match (brand)"
+        # 5. FG names that start with the item's brand (e.g. ELANI -> 'ELANI GREEN TEA 24/25 ...')
+        key = row_key(item)
+        if key:
+            hits = {fg for base, fgs in self.by_base.items() if base.startswith(key + " ") for fg in fgs}
+            if hits:
+                return hits, "FG name match (starts with brand)"
+        return set(), ""
+
+
+def _denominator(item, row_label, linker: FgLinker, pending, pending_products):
+    """Pcs per CFC = pack size in the chosen FG's name (n/m -> n x m).
+
+    Only the uploaded BOM and Order Status are used. If the FG name has no
+    n/m, the BOM's ENV/TAG pieces per CFC is used instead.
+    """
+    fgs, how = linker.fgs(item, row_label)
+    cands = {}
+    for fg in fgs:
+        p = pack_from_name(fg)
+        if p is None:
+            t = linker.bidx.type_of.get(linker.bidx.resolve(item, linker.mjp) or "") or item_kind(item)
+            tot = linker.bidx.total.get((fg, t))
+            p = float(tot) if tot and tot >= 1 else None
+        if p:
+            cands[fg] = p
     if not cands:
-        return None, NOT_IN_BOM + " (invalid quantity)", ""
+        return None, NOT_IN_BOM if not fgs else NOT_IN_BOM + " (no pack size in FG name)", ""
     pend = {fg: d for fg, d in cands.items() if fg in pending_products}
     if pend:
         fg = max(pend, key=lambda f: (pending[f], pend[f]))
-        return pend[fg], "Pending order", fg
+        return pend[fg], f"Pending order ({how})", fg
     cnt = Counter(cands.values())
     best = max(cnt.items(), key=lambda kv: (kv[1], -kv[0]))[0]   # most common; tie -> smaller pack
-    fg = next(f for f, d in cands.items() if d == best)
-    return best, "BOM (most common pack)", fg
+    fg = sorted(f for f, d in cands.items() if d == best)[0]
+    return best, f"{how}, most common pack", fg
 
 
 def _order_rows(rows: list[Row]) -> list[Row]:
